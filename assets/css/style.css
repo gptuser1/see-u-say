@@ -71,6 +71,9 @@
 }
 
 /* ==================== Reset ==================== */
+/* 确保 hidden 属性始终生效，防止 display 规则覆盖它 */
+[hidden] { display: none !important; }
+
 *, *::before, *::after { box-sizing: border-box; }
 * { margin: 0; }
 html { -webkit-text-size-adjust: 100%; }
