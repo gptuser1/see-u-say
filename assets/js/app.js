@@ -40,28 +40,34 @@
   var providersLoaded = false;
   var confirmedPrompt = null; // 优化确认后用于生成的 prompt
 
-  // 鉴权：所有请求携带令牌；401 时清除令牌并要求重新登录
-  function authHeaders(extra) {
-    var h = extra || {};
-    var token = (window.getAccessToken && window.getAccessToken()) || "";
-    if (token) h["Authorization"] = "Bearer " + token;
-    return h;
+  // 鉴权：令牌从顶栏输入框读取，每次请求作为参数携带（query 或 body 字段）
+  // 服务端中间件统一校验，前端无法绕过
+  var tokenInput = $("token-input");
+  // 令牌持久化到 localStorage，刷新不丢失
+  var TOKEN_KEY = "see-u-say-token";
+  try {
+    var saved = localStorage.getItem(TOKEN_KEY);
+    if (saved) tokenInput.value = saved;
+  } catch (e) {}
+  tokenInput.addEventListener("input", function () {
+    try { localStorage.setItem(TOKEN_KEY, tokenInput.value); } catch (e) {}
+  });
+  function getToken() { return tokenInput.value.trim(); }
+  function requireToken() {
+    if (!getToken()) {
+      showError("请先在顶部输入访问令牌。");
+      tokenInput.focus();
+      return false;
+    }
+    return true;
   }
   function handleUnauthorized(resp) {
-    if (resp && resp.status === 401 && window.logout) {
-      showError("访问令牌已失效，请重新登录。");
-      window.logout();
+    if (resp && resp.status === 401) {
+      showError("访问令牌无效，请检查顶部输入的令牌。");
+      tokenInput.focus();
       return true;
     }
     return false;
-  }
-
-  // 退出登录
-  var logoutBtn = $("logout-btn");
-  if (logoutBtn) {
-    logoutBtn.addEventListener("click", function () {
-      if (window.logout) window.logout();
-    });
   }
 
   // ==================== 尺寸校验 ====================
@@ -175,6 +181,7 @@
   // ==================== 生成图片 ====================
   generateBtn.addEventListener("click", function () {
     if (!validateSize()) return;
+    if (!requireToken()) return;
     var prompt = confirmedPrompt || promptEl.value.trim();
     if (!prompt) { showError("请输入提示词。"); return; }
     generate(prompt);
@@ -188,11 +195,12 @@
     form.append("prompt", prompt);
     form.append("width", widthEl.value);
     form.append("height", heightEl.value);
+    form.append("token", getToken());
     refSlots.forEach(function (res, idx) {
       if (res) form.append("input_image_" + idx, res.blob, "ref_" + idx + ".png");
     });
 
-    fetch("/api/generate", { method: "POST", headers: authHeaders(), body: form })
+    fetch("/api/generate", { method: "POST", body: form })
       .then(function (r) {
         if (handleUnauthorized(r)) throw new Error("unauthorized");
         return r.json().then(function (d) { return { ok: r.ok, data: d }; });
@@ -230,7 +238,9 @@
   });
 
   function loadProviders() {
-    fetch("/api/providers", { headers: authHeaders() }).then(function (r) {
+    var url = "/api/providers";
+    if (getToken()) url += "?token=" + encodeURIComponent(getToken());
+    fetch(url).then(function (r) {
       if (handleUnauthorized(r)) throw new Error("unauthorized");
       return r.json();
     }).then(function (list) {
@@ -274,6 +284,7 @@
     var rule = optimizeRule.value.trim();
     var userPrompt = promptEl.value.trim();
     if (!userPrompt) { showError("请先输入原始提示词。"); return; }
+    if (!requireToken()) return;
     optimizeBtn.disabled = true;
     reoptimizeBtn.disabled = true;
     var old = optimizeBtn.textContent;
@@ -288,11 +299,12 @@
       temperature: parseFloat(temperatureEl.value),
       topP: parseFloat(topPEl.value),
       maxTokens: parseInt(maxTokensEl.value, 10),
+      token: getToken(),
     };
 
     fetch("/api/optimize", {
       method: "POST",
-      headers: authHeaders({ "Content-Type": "application/json" }),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     })
       .then(function (r) {
