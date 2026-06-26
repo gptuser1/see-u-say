@@ -40,6 +40,30 @@
   var providersLoaded = false;
   var confirmedPrompt = null; // 优化确认后用于生成的 prompt
 
+  // 鉴权：所有请求携带令牌；401 时清除令牌并要求重新登录
+  function authHeaders(extra) {
+    var h = extra || {};
+    var token = (window.getAccessToken && window.getAccessToken()) || "";
+    if (token) h["Authorization"] = "Bearer " + token;
+    return h;
+  }
+  function handleUnauthorized(resp) {
+    if (resp && resp.status === 401 && window.logout) {
+      showError("访问令牌已失效，请重新登录。");
+      window.logout();
+      return true;
+    }
+    return false;
+  }
+
+  // 退出登录
+  var logoutBtn = $("logout-btn");
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", function () {
+      if (window.logout) window.logout();
+    });
+  }
+
   // ==================== 尺寸校验 ====================
   function isMultipleOf64(v) { return v > 0 && v % 64 === 0; }
   function inRange(v) { return v >= 256 && v <= 1920; }
@@ -168,8 +192,11 @@
       if (res) form.append("input_image_" + idx, res.blob, "ref_" + idx + ".png");
     });
 
-    fetch("/api/generate", { method: "POST", body: form })
-      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+    fetch("/api/generate", { method: "POST", headers: authHeaders(), body: form })
+      .then(function (r) {
+        if (handleUnauthorized(r)) throw new Error("unauthorized");
+        return r.json().then(function (d) { return { ok: r.ok, data: d }; });
+      })
       .then(function (res) {
         generateBtn.disabled = false;
         var d = res.data || {};
@@ -184,7 +211,7 @@
       })
       .catch(function (err) {
         generateBtn.disabled = false;
-        showError("网络错误：" + (err.message || "请求失败"));
+        if (err.message !== "unauthorized") showError("网络错误：" + (err.message || "请求失败"));
       });
   }
 
@@ -203,7 +230,10 @@
   });
 
   function loadProviders() {
-    fetch("/api/providers").then(function (r) { return r.json(); }).then(function (list) {
+    fetch("/api/providers", { headers: authHeaders() }).then(function (r) {
+      if (handleUnauthorized(r)) throw new Error("unauthorized");
+      return r.json();
+    }).then(function (list) {
       if (!list || !list.length) {
         providerSelect.innerHTML = '<option>未配置提供商</option>';
         providerSelect.disabled = true;
@@ -224,8 +254,8 @@
       providerSelect.onchange = function () {
         updateModels(list, parseInt(providerSelect.value, 10));
       };
-    }).catch(function () {
-      providerSelect.innerHTML = '<option>加载失败</option>';
+    }).catch(function (err) {
+      if (err.message !== "unauthorized") providerSelect.innerHTML = '<option>加载失败</option>';
     });
   }
 
@@ -262,10 +292,13 @@
 
     fetch("/api/optimize", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(body),
     })
-      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        if (handleUnauthorized(r)) throw new Error("unauthorized");
+        return r.json();
+      })
       .then(function (d) {
         optimizeBtn.disabled = false;
         reoptimizeBtn.disabled = false;
@@ -281,7 +314,7 @@
         optimizeBtn.disabled = false;
         reoptimizeBtn.disabled = false;
         optimizeBtn.textContent = old;
-        showError("网络错误：" + (err.message || "请求失败"));
+        if (err.message !== "unauthorized") showError("网络错误：" + (err.message || "请求失败"));
       });
   }
 
