@@ -57,17 +57,39 @@ export async function onRequestPost(context) {
   const baseUrl = provider.base_url.replace(/\/+$/, "");
   const url = `${baseUrl}/chat/completions`;
 
-  try {
-    const resp = await fetch(url, {
+  const THINKING_KEYWORDS = [
+    "does not support parameter",
+    "not support",
+    "enable_thinking",
+    "thinking",
+  ];
+
+  const shouldStripThinking = (data) => {
+    const str = JSON.stringify(data).toLowerCase();
+    return THINKING_KEYWORDS.some((kw) => str.includes(kw.toLowerCase()));
+  };
+
+  const doFetch = async (pl) => {
+    return fetch(url, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${provider.api_key}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(pl),
     });
+  };
 
-    const data = await resp.json();
+  const requestWithRetry = async () => {
+    let resp = await doFetch(payload);
+    let data = await resp.json();
+
+    if (!resp.ok && shouldStripThinking(data)) {
+      const { thinking, enable_thinking, ...restPayload } = payload;
+      resp = await doFetch(restPayload);
+      data = await resp.json();
+    }
+
     if (!resp.ok) {
       const msg = (data && data.error && data.error.message) || `文本模型请求失败 (HTTP ${resp.status})`;
       return json({ success: false, error: msg }, 400);
@@ -75,6 +97,10 @@ export async function onRequestPost(context) {
 
     const content = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || "";
     return json({ success: true, optimizedPrompt: content.trim() });
+  };
+
+  try {
+    return await requestWithRetry();
   } catch (err) {
     return json({ success: false, error: "请求文本模型失败：" + (err.message || err) }, 502);
   }
